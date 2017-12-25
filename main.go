@@ -1,41 +1,40 @@
 package main
 
 import (
-	"crypto/data/postgres"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
+
+	"github.com/Crypto/data/postgres"
 )
 
 var (
-	gdax *GdaxClient
-	pg   *postgres.Postgres
-	btc  = make([]*postgres.Alert, 0)
-	eth  = make([]*postgres.Alert, 0)
-	ltc  = make([]*postgres.Alert, 0)
+	gdax     *GdaxClient
+	pg       *postgres.Postgres
+	btc      = make([]*postgres.Alert, 0)
+	eth      = make([]*postgres.Alert, 0)
+	ltc      = make([]*postgres.Alert, 0)
+	alertMap = make(map[string][]*postgres.Alert, 0)
 )
-var alerts = map[string]float64{
-	"BTC-USD": 14000,
-	"ETH-USD": 700,
-	"LTC-USD": 275,
-}
 
 func init() {
 	gdax = NewGdaxClient(nil)
-	pg = postgres.NewPostgres("postgres", "", "crypto", "10.0.1.193", "5432", "", "")
+	password := os.Getenv("POSTGRES_PASSWORD")
+	// todo add other pg values to env
+	pg = postgres.NewPostgres("postgres", password, "crypto", "10.0.1.193", "5432", "", "")
 }
 
 func status(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, `{"status":"ok"}`)
 }
 
-func main() {
-	defer pg.Close() // always close postgres connection before exiting program
+func getAlerts() {
 	alerts, err := pg.GetAlerts()
 	if err != nil {
 		log.Fatalf("Failed to fetch alerts: %s", err)
@@ -43,16 +42,29 @@ func main() {
 	for _, alert := range alerts {
 		switch alert.CurrencyID {
 		case 1:
-
+			btc = append(btc, alert)
+		case 2:
+			eth = append(eth, alert)
+		case 3:
+			ltc = append(ltc, alert)
 		}
 	}
+	alertMap["BTC-USD"] = btc
+	alertMap["ETH-USD"] = eth
+	alertMap["LTC-USD"] = ltc
+}
+
+func main() {
+	defer pg.Close() // always close postgres connection before exiting program
+	getAlerts()
+
 	http.HandleFunc("/status", status) // set router
 	log.Println("main serving")
 
 	go checkBitcoin()
 	go checkLitecoin()
 	go checkEtherium()
-	err = http.ListenAndServe(":9090", nil) // set listen port
+	err := http.ListenAndServe(":9090", nil) // set listen port
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
@@ -65,7 +77,6 @@ type GdaxClient struct {
 
 func checkEtherium() {
 	ticker := time.Tick(10 * time.Second)
-	alerting := false
 	for {
 		select {
 		case <-ticker:
@@ -82,13 +93,13 @@ func checkEtherium() {
 			if currPrice, ok := resp.Bids[0][0].(string); ok {
 				current, _ = strconv.ParseFloat(currPrice, 64)
 			}
-
-			if !alerting && current > 0 && current <= alerts["ETH-USD"] {
-				log.Printf("Etherium Alert! Etherium is less than %f (%v)", alerts["ETH-USD"], current)
-				alerting = true
-				break
-			} else if current > alerts["ETH-USD"] {
-				alerting = false
+			for _, alert := range eth {
+				if !alert.Alerting && current > 0 && current <= alert.Price {
+					log.Printf("Etherium Alert! Etherium is less than %f (%v)", alert.Price, current)
+					alert.Alerting = true
+				} else if current > alert.Price {
+					alert.Alerting = false
+				}
 			}
 		}
 	}
@@ -96,7 +107,6 @@ func checkEtherium() {
 
 func checkLitecoin() {
 	ticker := time.Tick(10 * time.Second)
-	alerting := false
 	for {
 		select {
 		case <-ticker:
@@ -114,12 +124,13 @@ func checkLitecoin() {
 				current, _ = strconv.ParseFloat(currPrice, 64)
 			}
 
-			if !alerting && current > 0 && current <= alerts["LTC-USD"] {
-				log.Printf("Litecoin Alert! Litecoin is less than %f (%v)", alerts["LTC-USD"], current)
-				alerting = true
-				break
-			} else if current > alerts["LTC-USD"] {
-				alerting = false
+			for _, alert := range ltc {
+				if !alert.Alerting && current > 0 && current <= alert.Price {
+					log.Printf("Litecoin Alert! Litecoin is less than %f (%v)", alert.Price, current)
+					alert.Alerting = true
+				} else if current > alert.Price {
+					alert.Alerting = false
+				}
 			}
 		}
 	}
@@ -127,7 +138,6 @@ func checkLitecoin() {
 
 func checkBitcoin() {
 	ticker := time.Tick(10 * time.Second)
-	alerting := false
 	for {
 		select {
 		case <-ticker:
@@ -145,12 +155,13 @@ func checkBitcoin() {
 				current, _ = strconv.ParseFloat(currPrice, 64)
 			}
 
-			if !alerting && current > 0 && current <= alerts["BTC-USD"] {
-				log.Printf("Bitcoin Alert! Bitcoin is less than %f (%v)", alerts["BTC-USD"], current)
-				alerting = true
-				break
-			} else if current > alerts["BTC-USD"] {
-				alerting = false
+			for _, alert := range btc {
+				if !alert.Alerting && current > 0 && current <= alert.Price {
+					log.Printf("Bitcoin Alert! Bitcoin is less than %f (%v)", alert.Price, current)
+					alert.Alerting = true
+				} else if current > alert.Price {
+					alert.Alerting = false
+				}
 			}
 		}
 	}

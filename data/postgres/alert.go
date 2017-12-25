@@ -13,6 +13,7 @@ type Alert struct {
 	Price      float64
 	LessThan   bool
 	Active     bool
+	Alerting   bool
 }
 
 // return an array of all active alerts
